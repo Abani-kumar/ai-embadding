@@ -1,29 +1,41 @@
 import os
-from fastapi import FastAPI
-from langchain_community.document_loaders import CSVLoader
-from langchain_community.vectorstores import FAISS
-from langchain_openai import OpenAIEmbeddings
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from langchain.document_loaders import CSVLoader
+from langchain.vectorstores import FAISS
+from langchain.embeddings import OpenAIEmbeddings
 from langchain.prompts import PromptTemplate
-from langchain_community.chat_models import ChatOpenAI
+from langchain.chat_models import ChatOpenAI
 from langchain.chains import LLMChain
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
 load_dotenv()
 
+# Initialize the FastAPI app
 app = FastAPI()
 
 # 1. Vectorize the sales response CSV data
-loader = CSVLoader(file_path="salaries.csv")
-documents = loader.load()
+try:
+    loader = CSVLoader(file_path="salaries.csv")
+    documents = loader.load()
+except Exception as e:
+    raise RuntimeError(f"Error loading CSV file: {e}")
 
-embeddings = OpenAIEmbeddings()
-db = FAISS.from_documents(documents, embeddings)
+try:
+    embeddings = OpenAIEmbeddings()
+    db = FAISS.from_documents(documents, embeddings)
+except Exception as e:
+    raise RuntimeError(f"Error creating FAISS database: {e}")
 
 # 2. Function for similarity search
 def retrieve_info(query):
-    similar_response = db.similarity_search(query, k=3)
-    page_contents_array = [doc.page_content for doc in similar_response]
-    return page_contents_array
+    try:
+        similar_response = db.similarity_search(query, k=3)
+        page_contents_array = [doc.page_content for doc in similar_response]
+        return page_contents_array
+    except Exception as e:
+        raise RuntimeError(f"Error during similarity search: {e}")
 
 # 3. Setup LLMChain & prompts
 llm = ChatOpenAI(temperature=0, model="gpt-3.5-turbo-16k-0613")
@@ -53,15 +65,24 @@ chain = LLMChain(llm=llm, prompt=prompt)
 
 # 4. Retrieval augmented generation
 def generate_response(message):
-    best_practice = retrieve_info(message)
-    response = chain.run(message=message, best_practice=best_practice)
-    return response
+    try:
+        best_practice = retrieve_info(message)
+        response = chain.run(message=message, best_practice=best_practice)
+        return response
+    except Exception as e:
+        raise RuntimeError(f"Error generating response: {e}")
 
 # 5. Create FastAPI endpoints
+class MessageRequest(BaseModel):
+    message: str
+
 @app.post("/generate-response/")
-async def get_response(message: str):
-    response = generate_response(message)
-    return {"response": response}
+async def get_response(request: MessageRequest):
+    try:
+        response = generate_response(request.message)
+        return {"response": response}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating response: {e}")
 
 if __name__ == "__main__":
     import uvicorn
